@@ -1,0 +1,1001 @@
+{
+  "name": "ServiceM8 - Import Multi-Site Job Cards",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Upload Site List",
+        "formDescription": "Upload the spreadsheet of site addresses, contacts, job numbers and emails for this customer.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Customer Name",
+              "placeholder": "Enter the customer name exactly as it appears in ServiceM8",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Site List Spreadsheet",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "acceptFileTypes": ".xlsx,.xls,.csv",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "05b99fac-5908-4f68-a4af-7f789b6996c3",
+      "name": "Site List Uploaded",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        416
+      ],
+      "webhookId": "a39e0130-5e87-40f4-8a08-5eac6c323a87"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "273e790b-0b4d-4603-abf0-70ce1af5f323",
+              "name": "jobStatus",
+              "type": "string",
+              "value": "Work Order"
+            },
+            {
+              "id": "2a4c57b4-27aa-4f20-b42a-5aea666effc8",
+              "name": "notifyEmail",
+              "type": "string",
+              "value": "={{ $env.NOTIFY_EMAIL }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "016043a7-7a4f-4c1a-90aa-f4760234d3bc",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "Site_List_Spreadsheet",
+        "options": {}
+      },
+      "id": "659a28a5-c2fe-4663-b0f1-4467d92e24d6",
+      "name": "Parse Spreadsheet",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "654f10b4-d3ee-441f-a7a4-be47e039e945",
+              "name": "jobNumber",
+              "type": "string",
+              "value": "={{ ($json['Job Number'] ?? '').toString().trim() }}"
+            },
+            {
+              "id": "2a11fff3-a918-48b8-b3f9-aaa7bb55950a",
+              "name": "siteAddress",
+              "type": "string",
+              "value": "={{ ($json['Site Address'] ?? '').toString().trim() }}"
+            },
+            {
+              "id": "e81e75a7-98d3-4590-a4a9-778eb3be4008",
+              "name": "email",
+              "type": "string",
+              "value": "={{ ($json['Email'] ?? '').toString().trim() }}"
+            },
+            {
+              "id": "c183d6f2-2d64-40ae-99e1-d0d30abb6a7c",
+              "name": "siteContactFirst",
+              "type": "string",
+              "value": "={{ (($json['Site Contact Name'] ?? '').toString().trim().split(' ')[0]) || '' }}"
+            },
+            {
+              "id": "5467a9e2-ee1a-42c6-8feb-1c91789353fd",
+              "name": "siteContactLast",
+              "type": "string",
+              "value": "={{ (($json['Site Contact Name'] ?? '').toString().trim().split(' ').slice(1).join(' ')) || '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d92e4131-d2d3-45ad-aedc-6bb1cf77d25b",
+      "name": "Normalize Row Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1792,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst seen = new Set();\nconst validRows = [];\nconst skippedResults = [];\n\nfor (const item of items) {\n  const data = item.json;\n  const jobNumber = (data.jobNumber || '').toString().trim();\n  const siteAddress = (data.siteAddress || '').toString().trim();\n  const email = (data.email || '').toString().trim();\n  const siteContactFirst = (data.siteContactFirst || '').toString().trim();\n  const siteContactLast = (data.siteContactLast || '').toString().trim();\n  const contactName = `${siteContactFirst} ${siteContactLast}`.trim();\n\n  const blockingReasons = [];\n  if (!jobNumber) blockingReasons.push('Missing job number');\n  if (!siteAddress) blockingReasons.push('Missing site address');\n  if (!email) blockingReasons.push('Missing email');\n  else if (!emailRegex.test(email)) blockingReasons.push('Email format looks invalid');\n\n  if (blockingReasons.length > 0) {\n    skippedResults.push({ jobNumber: jobNumber || '(missing)', siteAddress: siteAddress || '(missing)', contact: contactName, email, status: 'invalid', detail: blockingReasons.join('; ') });\n    continue;\n  }\n  if (seen.has(jobNumber)) {\n    skippedResults.push({ jobNumber, siteAddress, contact: contactName, email, status: 'duplicate_in_file', detail: 'Same job number appears more than once in the uploaded file' });\n    continue;\n  }\n  seen.add(jobNumber);\n  validRows.push({ json: { jobNumber, siteAddress, email, siteContactFirst, siteContactLast, routeStatus: 'ok', skippedResults } });\n}\n\n// Attach skippedResults to every valid row so it travels through the loop\nreturn validRows.map(row => ({ json: { ...row.json, skippedResults } }));"
+      },
+      "id": "f6a8c834-4bb4-4225-971c-5735771462e0",
+      "name": "Validate And Deduplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "fields": {
+          "company_uuid": "={{ $('Merge Config And Client').first().json.parentClientUUID }}",
+          "status": "Work Order",
+          "purchase_order_number": "={{ $json.jobNumber }}",
+          "job_address": "={{ $json.siteAddress }}"
+        }
+      },
+      "id": "8f01d1d8-8cfd-45b5-8732-df2d895f3d61",
+      "name": "Create Job Card",
+      "type": "@servicem8/n8n-nodes-servicem8.serviceM8",
+      "typeVersion": 1,
+      "position": [
+        2912,
+        224
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {},
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "41a39790-7d2f-404d-a5b3-cd1057a5944f",
+              "leftValue": "={{ $json.createStatus }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "error"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bfffb430-f5f6-48f3-b1c3-076c7156436a",
+      "name": "Create Errored?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3808,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a2e3c4e2-391a-431c-8173-c35512df18ae",
+              "leftValue": "={{ $json.isAuthError }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b234672c-02f0-43f5-8239-1566556f47aa",
+      "name": "Is Auth Error?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4704,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "=ServiceM8 authentication error while creating job for PO {{ $json.jobNumber }}. Check the ServiceM8 API key. Raw error: {{ $json.createError }}"
+      },
+      "id": "ce7d7461-25aa-431e-b479-71ff07d8c741",
+      "name": "Halt - Auth Error",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        4928,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const response = $input.item.json;\nconst rowData = $('Prep Contact Request').item.json;\n\nlet contactStatus, contactError;\nif (response && response.error) {\n  contactStatus = 'error';\n  contactError = String(response.error);\n} else if (response && response.errorCode === 0) {\n  contactStatus = 'success';\n} else {\n  contactStatus = 'error';\n  contactError = 'Unexpected response: ' + JSON.stringify(response);\n}\n\nreturn { json: { ...rowData, contactStatus, contactError } };"
+      },
+      "id": "9c9db54f-ad13-4c17-946f-145f59957219",
+      "name": "Evaluate Contact Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0605a58-a084-422c-befa-3dae64c4ee60",
+              "leftValue": "={{ $json.contactStatus }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "error"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "de148e5a-3838-4e04-98dc-be9102b90732",
+      "name": "Contact Errored?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4704,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect All Outcomes already computed status/detail/contact correctly.\n// Just use it directly instead of re-deriving from fields that no longer exist here.\nconst allItems = $input.all();\n\nconst skippedResults = allItems.find(i => i.json.skippedResults)?.json.skippedResults || [];\n\nconst loopResults = allItems.map(item => {\n  const d = item.json;\n  return {\n    jobNumber: d.jobNumber,\n    siteAddress: d.siteAddress,\n    contact: d.contact || '',\n    email: d.email || '',\n    status: d.status,\n    detail: d.detail\n  };\n});\n\nconst results = [...skippedResults, ...loopResults];\n\nconst counts = { created: 0, created_contact_failed: 0, skipped_duplicate: 0, skipped_check_failed: 0, create_failed: 0, invalid: 0, duplicate_in_file: 0 };\nfor (const r of results) {\n  if (counts[r.status] !== undefined) counts[r.status]++;\n}\n\n// Only show genuine problems in the table — not normal skipped duplicates\nconst issues = results.filter(r => \n  r.status !== 'created' && r.status !== 'skipped_duplicate'\n);\n\nlet html = '<h3>Site import results</h3><ul>';\nhtml += `<li>✅ Created: ${counts.created}</li>`;\nhtml += `<li>⚠️ Created, contact failed: ${counts.created_contact_failed}</li>`;\nhtml += `<li>⏭️ Skipped (already exists): ${counts.skipped_duplicate}</li>`;\nhtml += `<li>❌ Failed to create: ${counts.create_failed}</li>`;\nhtml += `<li>🚫 Invalid rows in file: ${counts.invalid}</li>`;\nhtml += `<li>🔁 Duplicate rows within file: ${counts.duplicate_in_file}</li>`;\nhtml += '</ul>';\n\nif (issues.length > 0) {\n  html += '<h4>Needs attention</h4>';\n  html += '<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\" style=\"border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px;\">';\n  html += '<tr style=\"background:#f0f0f0\"><th style=\"padding:8px\">Job Number</th><th style=\"padding:8px\">Site Address</th><th style=\"padding:8px\">Status</th><th style=\"padding:8px\">Detail</th></tr>';\n  for (const r of issues) {\n    html += `<tr><td style=\"padding:6px\">${r.jobNumber}</td><td style=\"padding:6px\">${r.siteAddress}</td><td style=\"padding:6px\">${r.status}</td><td style=\"padding:6px\">${r.detail}</td></tr>`;\n  }\n  html += '</table>';\n} else {\n  html += '<p>✅ Everything imported cleanly — nothing needs attention.</p>';\n}\n\nreturn [{ json: { summaryHtml: html, counts, results } }];\n"
+      },
+      "id": "f8cf5da6-3b49-499d-943b-8ac5a1c940e6",
+      "name": "Build Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5152,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config').first().json.notifyEmail }}",
+        "subject": "=Site import results - {{ $now.toFormat('yyyy-MM-dd HH:mm') }}",
+        "message": "={{ $json.summaryHtml }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "d7bbd58c-c484-4dcb-8fcf-a780e25883ac",
+      "name": "Email Results To Admin",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        5376,
+        416
+      ],
+      "webhookId": "6f9571b9-dd81-4bab-b417-c0e4ec20ba8e"
+    },
+    {
+      "parameters": {
+        "filters": {
+          "filter": [
+            {
+              "field": "name",
+              "value": "={{ $('Site List Uploaded').first().json['Customer Name'].trim() }}"
+            }
+          ]
+        }
+      },
+      "id": "38810154-c6f1-42c3-a505-6049efff9fe5",
+      "name": "Lookup Client By Name",
+      "type": "@servicem8/n8n-nodes-servicem8.serviceM8",
+      "typeVersion": 1,
+      "position": [
+        448,
+        416
+      ],
+      "credentials": {},
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst customerName = $('Site List Uploaded').first().json['Customer Name'].trim();\n\n// Filter out items that are errors (continueOnFail passes error objects through)\nconst validItems = items.filter(i => i.json && i.json.uuid && !i.json.error);\n\nif (validItems.length === 0) {\n  // Could be API error or genuinely not found\n  const hasError = items.some(i => i.json && i.json.error);\n  return [{\n    json: {\n      lookupStatus: 'not_found',\n      lookupError: hasError\n        ? `ServiceM8 API error during client lookup: ${items[0].json.error}`\n        : `No client found in ServiceM8 matching the name \"${customerName}\". Check the spelling and try again.`,\n      customerName,\n    }\n  }];\n}\n\nif (validItems.length > 1) {\n  const names = validItems.map(i => i.json.name).join(', ');\n  return [{\n    json: {\n      lookupStatus: 'ambiguous',\n      lookupError: `Multiple clients found matching \"${customerName}\": ${names}. Use a more specific name.`,\n      customerName,\n    }\n  }];\n}\n\n// Exactly one match\nconst client = validItems[0].json;\nreturn [{\n  json: {\n    lookupStatus: 'found',\n    parentClientUUID: client.uuid,\n    parentClientName: client.name,\n    customerName,\n  }\n}];"
+      },
+      "id": "0922ac45-55f1-4db6-b48c-e114ea974fd5",
+      "name": "Validate Client Lookup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f73152ef-0d5f-4361-a389-4bca79b8fbbe",
+              "leftValue": "={{ $json.lookupStatus }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "found"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3bc8dcc7-df3c-497e-b7ea-7370581a14c4",
+      "name": "Client Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Config').first().json;\nconst client = $('Validate Client Lookup').first().json;\nreturn [{\n  json: {\n    ...config,\n    parentClientUUID: client.parentClientUUID,\n    parentClientName: client.parentClientName,\n  }\n}];"
+      },
+      "id": "59a95040-e7e9-4535-8be4-d351636a5191",
+      "name": "Merge Config And Client",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Config').first().json.notifyEmail }}",
+        "subject": "=❌ ServiceM8 Import Failed - Customer Not Found",
+        "message": "=<p><strong>Import could not start.</strong></p><p>{{ $json.lookupError }}</p><p>Customer entered: <strong>{{ $json.customerName }}</strong></p><p>Please check the name in ServiceM8 and retry the import.</p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        512
+      ],
+      "id": "d3b2d237-1f69-40ee-8eb3-8a9cf1a6e0e6",
+      "name": "Email Lookup Failure",
+      "webhookId": "dd1aa067-3d8e-4051-98a0-63e8b95b22b6"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge Config And Client strips the binary.\n// Pull it back from the Form Trigger item so Parse Spreadsheet can read it.\nconst formItem = $('Site List Uploaded').first();\nconst configItem = $('Merge Config And Client').first();\nreturn [{\n  json: configItem.json,\n  binary: formItem.binary,\n}];"
+      },
+      "id": "e171462c-9ef5-4995-804d-3367c91f6a66",
+      "name": "Restore Binary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Each branch's HTTP call is already filtered to this row's PO number + client UUID,\n// so $input.item is the single matching job (or this branch got 0 results).\nconst response = $input.item.json;\nconst rowData = $('Attach Job Context').item.json;\n\nif (response && response.uuid) {\n  return { json: { ...rowData, newJobUuid: response.uuid, createStatus: 'success', isAuthError: false } };\n} else {\n  return { json: { ...rowData, newJobUuid: null, createStatus: 'error', createError: 'Job created but UUID not found in ServiceM8', isAuthError: false } };\n}"
+      },
+      "id": "75acb941-53ee-4137-83c5-8b8a1b3d6ee5",
+      "name": "Fetch New Job UUID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = $input.all();\n\n// Separate by whether they have uuid (existing jobs) or jobNumber (spreadsheet rows)\nconst existingJobs = allItems.filter(i => i.json.uuid);\nconst spreadsheetRows = allItems.filter(i => i.json.jobNumber);\n\nconst parentUUID = $('Merge Config And Client').first().json.parentClientUUID;\n\n// Build Set of existing PO numbers\nconst existingPOs = new Set(\n  existingJobs\n    .filter(j => j.json.company_uuid === parentUUID)\n    .map(j => (j.json.purchase_order_number || '').toString().trim().toLowerCase())\n);\n\n// Return one item per spreadsheet row with alreadyExists correctly set\nreturn spreadsheetRows.map(row => {\n  const jobNumber = (row.json.jobNumber || '').toString().trim().toLowerCase();\n  const alreadyExists = existingPOs.has(jobNumber);\n  return {\n    json: {\n      ...row.json,\n      parentClientUUID: parentUUID,\n      alreadyExists\n    }\n  };\n});"
+      },
+      "id": "6ea57f07-e04e-40bc-906f-45c41de3e79a",
+      "name": "Check And Route Each Row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2464,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "skip-exists-chk",
+              "leftValue": "={{ $json.alreadyExists }}",
+              "operator": {
+                "operation": "true",
+                "type": "boolean"
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "85fd200e-e555-4c6a-9fa7-ff5d9bff1148",
+      "name": "Skip Existing?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\nreturn { json: {\n  jobNumber: item.jobNumber,\n  siteAddress: item.siteAddress,\n  siteContactFirst: item.siteContactFirst || '',\n  siteContactLast: item.siteContactLast || '',\n  email: item.email,\n  skippedResults: item.skippedResults || [],\n  _result: 'skipped_duplicate',\n  _detail: 'A job with this PO number already exists for this client - skipped'\n}};"
+      },
+      "id": "518b42d0-b2f1-4d08-b668-2bd2b2ff7fd6",
+      "name": "Tag Skipped Duplicate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4704,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Collect results from all branches.\n// Each branch tags its item with _result and _detail.\nconst item = $input.item.json;\n\nlet status, detail;\nif (item._result) {\n  status = item._result;\n  detail = item._detail;\n} else if (item.createStatus === 'error') {\n  status = 'create_failed';\n  detail = item.createError || 'Job creation failed';\n} else if (item.contactStatus === 'error') {\n  status = 'created_contact_failed';\n  detail = `Job ${item.newJobUuid} created, but contact failed: ${item.contactError}`;\n} else {\n  status = 'created';\n  detail = `Job ${item.newJobUuid} created with PO ${item.jobNumber}`;\n}\n\nreturn { json: {\n  jobNumber: item.jobNumber,\n  siteAddress: item.siteAddress,\n  contact: `${item.siteContactFirst||''} ${item.siteContactLast||''}`.trim(),\n  email: item.email,\n  skippedResults: item.skippedResults || [],\n  status,\n  detail\n}};"
+      },
+      "id": "b407de22-0eea-42dc-b0a9-ce4e7d12f952",
+      "name": "Collect All Outcomes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4928,
+        416
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.servicem8.com/api_1.0/job.json?%24filter=company_uuid%20eq%20%27{{ $('Merge Config And Client').first().json.parentClientUUID }}%27",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "154be078-fa7d-46e5-ac58-939f8da6a2e2",
+      "name": "Fetch All Existing Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Create Job Card replaces the item with the raw API response, losing row context.\n// Re-attach jobNumber/parentClientUUID/contact fields from Check And Route Each Row.\nconst response = $input.item.json;\nconst rowData = $('Check And Route Each Row').item.json;\nreturn { json: { ...rowData, createResponse: response } };"
+      },
+      "id": "ee07f234-ea7b-46c1-a031-24ce69dfd5fa",
+      "name": "Attach Job Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Carry row data forward explicitly before the HTTP node strips it\nconst item = $input.item.json;\nreturn { json: item };"
+      },
+      "id": "34c7651a-322d-4f40-a595-602f164759b8",
+      "name": "Prep Contact Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4032,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.servicem8.com/api_1.0/job.json?%24filter=company_uuid%20eq%20%27{{ $json.parentClientUUID }}%27%20and%20purchase_order_number%20eq%20%27{{ $json.jobNumber }}%27",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "2016882f-bf28-4047-9b3c-59186e30a1a2",
+      "name": "Get All Jobs For UUID Lookup",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3360,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.servicem8.com/api_1.0/jobcontact.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "job_uuid",
+              "value": "={{ $json.newJobUuid }}"
+            },
+            {
+              "name": "first",
+              "value": "={{ $json.siteContactFirst }}"
+            },
+            {
+              "name": "last",
+              "value": "={{ $json.siteContactLast }}"
+            },
+            {
+              "name": "email",
+              "value": "={{ $json.email }}"
+            },
+            {
+              "name": "type",
+              "value": "Job Contact"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c5bce12b-530d-45de-81c8-d047c7ef8762",
+      "name": "Attach Site Contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4256,
+        320
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2240,
+        320
+      ],
+      "id": "119daa51-aab5-439c-a0b8-8792a80aa1f1",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Site List Uploaded": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Lookup Client By Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "Normalize Row Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Row Data": {
+      "main": [
+        [
+          {
+            "node": "Validate And Deduplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Errored?": {
+      "main": [
+        [
+          {
+            "node": "Is Auth Error?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prep Contact Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Auth Error?": {
+      "main": [
+        [
+          {
+            "node": "Halt - Auth Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect All Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Contact Result": {
+      "main": [
+        [
+          {
+            "node": "Contact Errored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Summary": {
+      "main": [
+        [
+          {
+            "node": "Email Results To Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Client By Name": {
+      "main": [
+        [
+          {
+            "node": "Validate Client Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Client Lookup": {
+      "main": [
+        [
+          {
+            "node": "Client Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Client Found?": {
+      "main": [
+        [
+          {
+            "node": "Merge Config And Client",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email Lookup Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Config And Client": {
+      "main": [
+        [
+          {
+            "node": "Restore Binary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch All Existing Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Binary": {
+      "main": [
+        [
+          {
+            "node": "Parse Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch New Job UUID": {
+      "main": [
+        [
+          {
+            "node": "Create Errored?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate And Deduplicate": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Check And Route Each Row": {
+      "main": [
+        [
+          {
+            "node": "Skip Existing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Existing?": {
+      "main": [
+        [
+          {
+            "node": "Tag Skipped Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Job Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag Skipped Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Collect All Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contact Errored?": {
+      "main": [
+        [
+          {
+            "node": "Collect All Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect All Outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect All Outcomes": {
+      "main": [
+        [
+          {
+            "node": "Build Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch All Existing Jobs": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Job Card": {
+      "main": [
+        [
+          {
+            "node": "Attach Job Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Job Context": {
+      "main": [
+        [
+          {
+            "node": "Get All Jobs For UUID Lookup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Jobs For UUID Lookup": {
+      "main": [
+        [
+          {
+            "node": "Fetch New Job UUID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prep Contact Request": {
+      "main": [
+        [
+          {
+            "node": "Attach Site Contact",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach Site Contact": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Contact Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Check And Route Each Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "382cd1d3-70d1-456a-a886-9594a9d6a818",
+  "meta": {
+    "instanceId": "478fbece8fc591272cee7259774fcca30fb978c9e5efbf4d2caf74f2a68343b5"
+  },
+  "nodeGroups": [],
+  "id": "M3hTpkPWWWLOuxyf",
+  "tags": []
+}

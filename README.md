@@ -115,4 +115,4 @@ As more workflows are added, consider grouping them by system/integration, e.g.:
 
 ## License
 
-Add your preferred license here (e.g. MIT).
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
